@@ -48,7 +48,7 @@ function [ newdatatable, criteriaStrings ] = tablequery( DataTable, varargin )
 %     USAGE EXAMPLES:
 %         USAGE EXAMPLE 1:
 %                 (using a 'qryStruct' parameter)
-%            >> varsToRetrieve = {'site','t','Concentration'}
+%            >> varsToRetrieve = {'site','t','Concentration','z'}
 %            >> qCriteria.match.site = {'j171'}
 %            >> qCriteria.range.t = {[302.5 307]}
 %            >> qCriterua.range.z = {[100 150]} 
@@ -70,13 +70,14 @@ function [ newdatatable, criteriaStrings ] = tablequery( DataTable, varargin )
 %
 %            >> tablequery(DataTable, 'match', Mqry, 'range', Rqry);
 %
-%   MFILE:   tableQuery.m
+%   MFILE:   tablequery.m
 %   MATLAB:  8.4.0.150421 (R2014b)
 %   AUTHOR:  Daniel Edward Kaufman (USA)
 %            @ The Virginia Institute of Marine Science
 %   CONTACT: dkauf42@gmail.com
-%
-%   REVISIONS:
+%   REVISION HISTORY:
+%   - Bug-fix (Feb, 2016)
+%   - Added support for matches and ranges of class datetime. (Nov, 2015)
 %   - Added transfer of Data Table Units and Descriptions. (Apr, 2015)
 %   - Removed extraneous code and reordered inputs. (Mar, 2015)
 %   - Updated input options, increased speed and bug-fixes. (Feb, 2015)
@@ -113,7 +114,7 @@ if passedStruct && (passedMatch || passedRange)
             'cell arrays or a (''qryStruct'') structure, not both.']));
 end
 if isempty(varnameq); error('varnameq input cannot be empty'); end;
-if ~sprsoutput; fprintf('tableQuery processing query criteria... \n'); end;
+if ~sprsoutput; fprintf('tablequery processing query criteria... \n'); end;
 clear 'blankQryStruct' 'blankMatch' 'blankRange'
 
 % Get Info About Queried Variable(s)
@@ -123,6 +124,7 @@ initialdatalength = size(DataTable,1);
 if numel(varnameq)==1 && strcmpi(varnameq{1},'all')
     varnameq = allVarNames;
 end
+numOfVarQ = numel(varnameq);
 
 %% Parse 'match' and/or 'range' input
 if passedMatch
@@ -152,7 +154,7 @@ for cii = 1:numel(ctns) % CHECK BOTH TYPES OF CRITERIA (MATCH and RANGE)
         % Ensure queried vars. have corresponding vars. in DataTable
         validatestring( thisCrit, allVarNames );
         if strcmp(mORr,'range')
-            if ~isnumeric(qryStruct.(mORr).(thisCrit){1})
+            if ~isnumeric(qryStruct.(mORr).(thisCrit){1}) && ~isdatetime(qryStruct.(mORr).(thisCrit){1})
                 error('Range Criteria Must be Numeric')
             elseif numel(qryStruct.(mORr).(thisCrit){1}) ~= 2 && ~isempty(qryStruct.(mORr).(thisCrit){1})
                 error('Range Criterion Must Be A Two Element Numeric Vector')
@@ -168,18 +170,22 @@ for cii = 1:numel(ctns) % CHECK BOTH TYPES OF CRITERIA (MATCH and RANGE)
                 critStrii = critStrii+1;
                 switch types.(mORr).(qcnames.(mORr){iiqc})
                     case 'double'
-                        critStr = [' ',qcnames.(mORr){iiqc},...
-                            ': ',num2str( qryStruct.(mORr).(qcnames.(mORr){iiqc}){:} )];
-                        fprintf(critStr);
-                        fprintf('\n');
+                        css = num2str( qryStruct.(mORr).(qcnames.(mORr){iiqc}){:} );
                     case 'cell'
                         error('Criteria themselves should not be in cell format');
+                    case 'datetime'
+                        css = datestr( qryStruct.(mORr).(qcnames.(mORr){iiqc}){:} );
+                        if ~isvector(css)
+                            css = css.';
+                            css(end+1,:) = repmat(' ',size(css,2),1);
+                            css = css(:).';
+                        end
                     otherwise
-                        critStr = [' ',qcnames.(mORr){iiqc},...
-                            ': ',num2str( qryStruct.(mORr).(qcnames.(mORr){iiqc}){:} )];
-                        fprintf(critStr);
-                        fprintf('\n');
+                        css = num2str( qryStruct.(mORr).(qcnames.(mORr){iiqc}){:} );
                 end
+                critStr = [' ',qcnames.(mORr){iiqc},': ',css];
+                fprintf(critStr);
+                fprintf('\n');
                 criteriaStrings{critStrii} = critStr;
                 critStrii = critStrii+1;
             end
@@ -203,7 +209,7 @@ if any(strcmp(ctns,'match'));
                         strcmp(qryStruct.match.(thisCrit){iicrit}, thisCritData);
                 end
                 matches = matches & chartempmatches;
-            case 'double'
+            case {'double', 'datetime'}
                 matches = matches & ismember( thisCritData, ...
                     qryStruct.match.(thisCrit){:} );
             otherwise
@@ -226,7 +232,7 @@ if any(strcmp(ctns,'range'));
             continue
         end
         switch types.range.(thisCrit)
-            case 'double'
+            case {'double','datetime'}
                 inRanges = inRanges & ...
                   ( thisCritData >= qryStruct.range.(thisCrit){1}(1) & ...
                     thisCritData <= qryStruct.range.(thisCrit){1}(2) );
@@ -267,12 +273,13 @@ for iiav = 1:numOfTableVars
         end
         
         % Transfer Old DataTable Units and Descriptions to New DataTable
-        varqTableIdx=strcmpi(DataTable.Properties.VariableNames,(allVarNames{iiav}));
+        varqTableIdx=strcmp(DataTable.Properties.VariableNames,(allVarNames{iiav}));
+        newVidx = strcmp(newdatatable.Properties.VariableNames,(allVarNames{iiav}));
         if numel(DataTable.Properties.VariableNames) == numel(DataTable.Properties.VariableUnits)
-            newdatatable.Properties.VariableUnits{varqTableIdx} = DataTable.Properties.VariableUnits{varqTableIdx};
+            newdatatable.Properties.VariableUnits{newVidx} = DataTable.Properties.VariableUnits{varqTableIdx};
         end
         if numel(DataTable.Properties.VariableNames) == numel(DataTable.Properties.VariableDescriptions)
-            newdatatable.Properties.VariableDescriptions{varqTableIdx} = DataTable.Properties.VariableDescriptions{varqTableIdx};
+            newdatatable.Properties.VariableDescriptions{newVidx} = DataTable.Properties.VariableDescriptions{varqTableIdx};
         end
     end
 end
